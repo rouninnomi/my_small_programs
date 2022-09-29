@@ -5,11 +5,19 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
-# sns.set(font='UTF-8')
+# https://www.yutaka-note.com/entry/matplotlib_japanese
+# import matplotlib.font_manager as fm
+# import matplotlib as mpl
+
+# fontpath = '/opt/conda/lib/python3.9/site-packages/matplotlib/mpl-data/fonts/ttf/ipaexg.ttf'
+# prop = fm.FontProperties(fname=fontpath)
+# mpl.rcParams['font.family'] = prop.get_name()
+# plt.rcParams['font.family'] = "IPAexGothic"
 
 code_dir = Path(__file__)
 ipt_dir = Path(code_dir.parents[1], 'in')
 otpt_dir = Path(code_dir.parents[1], 'out')
+sns.set(font='IPAexGothic')
 
 class Onward_list_generator():
 
@@ -20,23 +28,43 @@ class Onward_list_generator():
             self.kibou_lists.append(pd.read_excel(path.resolve()))
 
         self.kibou_lists = [pddf.fillna(0) for pddf in self.kibou_lists]
+        self.members = [pddf.loc[0, '名前'] for pddf in self.kibou_lists]
 
         # 当直回数のカウンター
         self.n_days = self.kibou_lists[0].shape[0]
-        self.counter_dict = {'勝木': 6}
-        self.counter_dict['松本'] = self.counter_dict['濱田'] = math.floor((self.n_days - self.counter_dict['勝木'])/3)
-        self.counter_dict['根岸'] = (
-            self.n_days 
-            -self.counter_dict['勝木']
-            -self.counter_dict['松本']
-            -self.counter_dict['濱田']
-            )
+        # self.counter_dict = {'勝木':7}
+        # self.counter_dict['片平'] = self.counter_dict['木塚'] = math.floor((self.n_days - self.counter_dict['勝木'])/3)
+        # self.counter_dict['吉田'] = (
+        #     self.n_days 
+        #     -self.counter_dict['勝木']
+        #     -self.counter_dict['片平']
+        #     -self.counter_dict['木塚']
+        #     )
+        self.counter_dict = dict()
+        for person in self.members:
+            self.counter_dict[person] = self.n_days // len(self.members)
+
+        # 一旦自分を落としておいてあとから足す
+        del self.counter_dict['勝木']
+
+        rest = self.n_days % len(self.members)
+        members = self.members.copy()
+        members.remove('勝木')
+        while rest > 0:
+            target = min(self.counter_dict, key=self.counter_dict.get)
+            self.counter_dict[target] = self.counter_dict[target] + 1
+            rest -= 1
+
+        self.counter_dict['勝木'] = self.n_days // len(self.members)
 
         # 休みのカウンター
-        self.yasumi_dict = {'勝木': 0,
-                    '根岸': 0,
-                    '松本': 0,
-                    '濱田': 0}
+        # self.yasumi_dict = {'勝木': 0,
+        #             '吉田': 0,
+        #             '片平': 0,
+        #             '木塚': 0}
+        self.yasumi_dict = dict()
+        for person in self.members:
+            self.yasumi_dict[person] = 0
 
         # 結果の表
         self.result = pd.DataFrame({'日付': self.kibou_lists[0]['日付'],
@@ -68,9 +96,6 @@ class Onward_list_generator():
             n = len(kouho[date])
             if n > 0:
                 kibou_ninzu[date] = n
-        # print("kibou_ninzu")
-        # print(kibou_ninzu)
-        # print(sum(kibou_ninzu.values()))
         
         while len(kibou_ninzu) > 0:
             # now = time.time()
@@ -89,9 +114,6 @@ class Onward_list_generator():
             # 休日だったらカウンター増やす
             if self.is_kyujitsu(date):
                 self.yasumi_dict[tantou] = self.yasumi_dict[tantou] + 1
-            
-        # print(self.result)
-        # print(self.counter_dict)
 
     def kyujitsu_ume(self):
         # 休日リスト
@@ -101,13 +123,12 @@ class Onward_list_generator():
             if (self.is_kyujitsu(date) and
                 self.result.loc[date, '担当'] == 'いません'):
                     kyujitsu_list.append(date)
-        print("kyujitsu list")
-        print(kyujitsu_list)
+
         # 埋まっていない休日をランダムチョイス
         counter = 0
         while len(kyujitsu_list) > 0:
             date = random.choice(kyujitsu_list)
-            print(date)
+            
             # 候補の作成
             # 休日が最小の人から選ぶ
             kouho = []
@@ -119,8 +140,6 @@ class Onward_list_generator():
                     if (df.loc[date, '不希望日'] == 0 and self.counter_dict[hito] > 0 ):
                         kouho.append(hito)
 
-            print("一次候補")
-            print(kouho)
             # 休日には連続して入らないようにする
             if date > 0 and self.is_kyujitsu(date - 1):
                 if self.result.loc[date - 1, '担当'] in kouho:
@@ -133,8 +152,6 @@ class Onward_list_generator():
             # 候補がいれば埋める
             if len(kouho) > 0:
                 tantou = random.choice(kouho)
-                print("正式候補")
-                print(tantou)
                 self.result.loc[date, '担当'] = tantou
                 self.counter_dict[tantou] = self.counter_dict[tantou] - 1
                 self.yasumi_dict[tantou] = self.yasumi_dict[tantou] + 1
@@ -147,8 +164,6 @@ class Onward_list_generator():
 
             if counter == 10:
                 break
-        print(self.counter_dict)
-        print(self.yasumi_dict)
 
     def nokori_ume(self):
         # 残りの埋まってないところのリスト
@@ -194,31 +209,18 @@ class Onward_list_generator():
                 print("候補いない")
             if counter == 10:
                 break
-        print(self.counter_dict)
 
     def plot_day_count(self):
         s = self.result['担当'].value_counts()
-        print(s)
         sns.barplot(x=s.index, y=s.values)
         plt.title('セカンドの日数です')
         plt.savefig(otpt_dir/"total.png")
 
     def plot_kyujitsu_count(self):
         s = pd.Series(self.yasumi_dict)
-        print(s)
         sns.barplot(x=s.index, y=s.values)
         plt.title('休日担当の日数です')
         plt.savefig(otpt_dir/"holidays.png")
 
     def return_result(self):
         return self.result
-
-olg = Onward_list_generator(ipt_dir=ipt_dir)
-olg.kibou_ume()
-olg.kyujitsu_ume()
-olg.nokori_ume()
-# olg.plot_day_count()
-# olg.plot_kyujitsu_count()
-
-result = olg.return_result()
-result.to_csv(Path(otpt_dir, '今月のセカンド担当表.csv'), encoding='shift-jis', index=False)
