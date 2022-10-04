@@ -1,3 +1,8 @@
+# TODO: 
+# 希望表出してない人の処理をどうするか？
+# 候補者リストを読み込ませ、出してない人をすべての日にちOKとしてリスト生成する
+
+
 import math, random
 from pathlib import Path
 
@@ -14,6 +19,7 @@ import seaborn as sns
 # mpl.rcParams['font.family'] = prop.get_name()
 # plt.rcParams['font.family'] = "IPAexGothic"
 
+
 code_dir = Path(__file__)
 ipt_dir = Path(code_dir.parents[1], 'in')
 otpt_dir = Path(code_dir.parents[1], 'out')
@@ -21,54 +27,63 @@ sns.set(font='IPAexGothic')
 
 class Onward_list_generator():
 
-    def __init__(self, ipt_dir) -> None:
-        # 希望日のエクセルリスト
-        self.kibou_lists = []
-        for path in ipt_dir.iterdir():
-            self.kibou_lists.append(pd.read_excel(path.resolve()))
+    def __init__(self, ipt_dir, otpt_dir) -> None:
+        # 希望日のエクセルリストから希望の日にち、メンバー、学年のデータを抽出
 
-        self.kibou_lists = [pddf.fillna(0) for pddf in self.kibou_lists]
-        self.members = [pddf.loc[0, '名前'] for pddf in self.kibou_lists]
+        def extract_basic_data_from_excels(ipt_dir):
+            self.kibou_lists = []
+            self.members = []
+            self.gakunen = []
 
-        # 当直回数のカウンター
-        self.n_days = self.kibou_lists[0].shape[0]
-        # self.counter_dict = {'勝木':7}
-        # self.counter_dict['片平'] = self.counter_dict['木塚'] = math.floor((self.n_days - self.counter_dict['勝木'])/3)
-        # self.counter_dict['吉田'] = (
-        #     self.n_days 
-        #     -self.counter_dict['勝木']
-        #     -self.counter_dict['片平']
-        #     -self.counter_dict['木塚']
-        #     )
-        self.counter_dict = dict()
-        for person in self.members:
-            self.counter_dict[person] = self.n_days // len(self.members)
+            for path in ipt_dir.iterdir():
+                self.kibou_lists.append(pd.read_excel(path.resolve(), usecols=["日付", "土日", "祝日", "希望日", "不希望日"]))
+                self.kibou_lists = [pddf.fillna(0) for pddf in self.kibou_lists]
 
-        # 一旦自分を落としておいてあとから足す
-        del self.counter_dict['勝木']
+                self.members.append(pd.read_excel(path.resolve(), usecols=["フルネーム"]).iloc[0, 0])
+                self.gakunen.append(int(pd.read_excel(path.resolve(), usecols=["医師年数（半角入力）"]).iloc[0, 0]))
 
-        rest = self.n_days % len(self.members)
-        members = self.members.copy()
-        members.remove('勝木')
-        while rest > 0:
-            target = min(self.counter_dict, key=self.counter_dict.get)
-            self.counter_dict[target] = self.counter_dict[target] + 1
-            rest -= 1
+        def make_duty_counters():
+            # 当直回数の残りカウンターを設定する
+            self.n_days = self.kibou_lists[0].shape[0]
 
-        self.counter_dict['勝木'] = self.n_days // len(self.members)
+            self.counter_dict = dict()
+            for person in self.members:
+                self.counter_dict[person] = self.n_days // len(self.members)
 
-        # 休みのカウンター
-        # self.yasumi_dict = {'勝木': 0,
-        #             '吉田': 0,
-        #             '片平': 0,
-        #             '木塚': 0}
-        self.yasumi_dict = dict()
-        for person in self.members:
-            self.yasumi_dict[person] = 0
+            # 一番学年が若く,、回数少ない順に残り回数を振り分ける
+            rest = self.n_days % len(self.members)
+            members = self.members.copy()
+            members.remove('勝木')
+            while rest > 0:
+                target = min(self.counter_dict, key=self.counter_dict.get)
+                self.counter_dict[target] = self.counter_dict[target] + 1
+                rest -= 1
 
-        # 結果の表
-        self.result = pd.DataFrame({'日付': self.kibou_lists[0]['日付'],
-                            '担当': 'いません'})
+            self.counter_dict['勝木'] = self.n_days // len(self.members)
+
+        def make_holiday_counters():
+            # 休みのカウンター
+            self.kyujitsu_kaisu_dict = dict()
+            for person in self.members:
+                self.kyujitsu_kaisu_dict[person] = 0
+
+        def make_result():
+            # 結果の表
+            self.result = pd.DataFrame({'日付': self.kibou_lists[0]['日付'],
+                                '担当': 'いません'})
+            
+        def read_past_record(otpt_dir):
+            # 過去の実績
+            if otpt_dir/"past_record.csv":
+                self.past_record = pd.read_csv(otpt_dir/"past_record.csv")
+            else:
+                self.past_record = pd.DataFrame({"名前":self.members, "回数":0})
+
+        extract_basic_data_from_excels(ipt_dir=ipt_dir)
+        make_duty_counters()
+        make_holiday_counters()
+        make_result()
+        read_past_record(otpt_dir=otpt_dir)
 
     def is_kyujitsu(self, date):
         if (self.kibou_lists[0].loc[date, '土日'] == 1 or
@@ -77,15 +92,63 @@ class Onward_list_generator():
         else:
             return False
 
+    def kyujitsu_ume(self):
+        # 休日リスト
+        kyujitsu_date_list = []
+        for date in range(self.result.shape[0]):
+            # 休日をリスト化
+            if self.is_kyujitsu(date):
+                kyujitsu_date_list.append(date)
+
+        # 休日をランダムチョイス
+        counter = 0
+        while len(kyujitsu_date_list) > 0:
+            date = random.choice(kyujitsu_date_list)
+        
+            # 候補の作成
+            # 休日が最小の人から選ぶ
+            kouho = []
+            kyujitsu_min = min(self.kyujitsu_kaisu_dict.values())
+
+            for df in self.kibou_lists:
+                hito = df.loc[0, '名前']
+                if self.kyujitsu_kaisu_dict[hito] == kyujitsu_min:
+                    if (df.loc[date, '不希望日'] == 0 and self.counter_dict[hito] > 0 ):
+                        kouho.append(hito)
+
+            # 休日には連続して入らないようにする
+            if date > 0 and self.is_kyujitsu(date - 1):
+                if self.result.loc[date - 1, '担当'] in kouho:
+                    kouho.remove(self.result.loc[date - 1, '担当'])
+
+            if date < self.kibou_lists[0].shape[0] - 1 and self.is_kyujitsu(date + 1):
+                if self.result.loc[date + 1, '担当'] in kouho:
+                    kouho.remove(self.result.loc[date + 1, '担当'])
+
+            # 候補がいれば埋める
+            if len(kouho) > 0:
+                tantou = random.choice(kouho)
+                self.result.loc[date, '担当'] = tantou
+                self.counter_dict[tantou] = self.counter_dict[tantou] - 1
+                self.kyujitsu_kaisu_dict[tantou] = self.kyujitsu_kaisu_dict[tantou] + 1
+                kyujitsu_date_list.remove(date)
+                # 休日が埋まりきらない場合がある?
+            else:
+                counter += 1
+                print(date)
+                print("候補いない")
+
+            if counter == 10:
+                break
+
     def kibou_ume(self):
         # 候補辞書の作成
         kouho = {}
         for date in range(self.n_days):
             kouho[date] = []
-            for df in self.kibou_lists:
-                hito = df.loc[0, '名前']
-                if (df.loc[date, '希望日'] == 1 and 
-                    self.counter_dict[hito] > 0):
+            for hito, df in zip(self.members, self.kibou_lists):
+                if self.counter_dict[hito] > 0:
+                    if df.loc[date, '希望日'] == 1:
                         kouho[date].append(hito)
         
         # 希望者がいる日にちのみ埋める
@@ -113,57 +176,7 @@ class Onward_list_generator():
 
             # 休日だったらカウンター増やす
             if self.is_kyujitsu(date):
-                self.yasumi_dict[tantou] = self.yasumi_dict[tantou] + 1
-
-    def kyujitsu_ume(self):
-        # 休日リスト
-        kyujitsu_list = []
-        for date in range(self.result.shape[0]):
-            # 埋まっていない休日をリスト化
-            if (self.is_kyujitsu(date) and
-                self.result.loc[date, '担当'] == 'いません'):
-                    kyujitsu_list.append(date)
-
-        # 埋まっていない休日をランダムチョイス
-        counter = 0
-        while len(kyujitsu_list) > 0:
-            date = random.choice(kyujitsu_list)
-            
-            # 候補の作成
-            # 休日が最小の人から選ぶ
-            kouho = []
-            kyujitsu_min = min(self.yasumi_dict.values())
-
-            for df in self.kibou_lists:
-                hito = df.loc[0, '名前']
-                if self.yasumi_dict[hito] == kyujitsu_min:
-                    if (df.loc[date, '不希望日'] == 0 and self.counter_dict[hito] > 0 ):
-                        kouho.append(hito)
-
-            # 休日には連続して入らないようにする
-            if date > 0 and self.is_kyujitsu(date - 1):
-                if self.result.loc[date - 1, '担当'] in kouho:
-                    kouho.remove(self.result.loc[date - 1, '担当'])
-
-            if date < self.kibou_lists[0].shape[0] - 1 and self.is_kyujitsu(date + 1):
-                if self.result.loc[date + 1, '担当'] in kouho:
-                    kouho.remove(self.result.loc[date + 1, '担当'])
-
-            # 候補がいれば埋める
-            if len(kouho) > 0:
-                tantou = random.choice(kouho)
-                self.result.loc[date, '担当'] = tantou
-                self.counter_dict[tantou] = self.counter_dict[tantou] - 1
-                self.yasumi_dict[tantou] = self.yasumi_dict[tantou] + 1
-                kyujitsu_list.remove(date)
-                # 休日が埋まりきらない場合がある?
-            else:
-                counter += 1
-                print(date)
-                print("候補いない")
-
-            if counter == 10:
-                break
+                self.kyujitsu_kaisu_dict[tantou] = self.kyujitsu_kaisu_dict[tantou] + 1
 
     def nokori_ume(self):
         # 残りの埋まってないところのリスト
@@ -217,10 +230,13 @@ class Onward_list_generator():
         plt.savefig(otpt_dir/"total.png")
 
     def plot_kyujitsu_count(self):
-        s = pd.Series(self.yasumi_dict)
+        s = pd.Series(self.kyujitsu_kaisu_dict)
         sns.barplot(x=s.index, y=s.values)
         plt.title('休日担当の日数です')
         plt.savefig(otpt_dir/"holidays.png")
+
+    def plot_past_record(self):
+        pass
 
     def return_result(self):
         return self.result
